@@ -21,12 +21,13 @@ import {
 } from '../art/illustrations.js';
 import { GAME_TITLE } from '../data/content.js';
 
-export function buildWorld({ scene, lowFx = false }) {
+export function buildWorld({ scene, lowFx = false, merge = true }) {
   const colliders = new Colliders(BOUNDS);
   const kit = new Kit(scene, colliders);
   const interactables = [];
   const npcs = {};
   const swayers = [];
+  let lampsPlaced = false;
   const clouds = [];
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -35,32 +36,70 @@ export function buildWorld({ scene, lowFx = false }) {
   scene.fog = new THREE.Fog(P.sky, 55, 140);
   scene.add(new THREE.AmbientLight(0xfff1dc, LIGHT.ambient));
   scene.add(new THREE.HemisphereLight(0xdff0ee, 0xc9a97d, LIGHT.hemi));
+  const SUN_OFFSET = { x: 4, y: 26, z: 16 };
   const sun = new THREE.DirectionalLight(0xfff0d2, LIGHT.sun);
-  sun.position.set(14, 26, 16);
+  sun.position.set(10 + SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
   sun.target.position.set(10, 0, 0);
   scene.add(sun, sun.target);
   if (!lowFx) {
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -36;
-    sun.shadow.camera.right = 36;
-    sun.shadow.camera.top = 20;
-    sun.shadow.camera.bottom = -20;
+    sun.shadow.mapSize.set(1024, 1024);
+    // a window around the player, not the whole 50 m world (follows the player in update())
+    sun.shadow.camera.left = -22;
+    sun.shadow.camera.right = 22;
+    sun.shadow.camera.top = 15;
+    sun.shadow.camera.bottom = -15;
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 90;
-    sun.shadow.bias = -0.0006;
-    sun.shadow.normalBias = 0.03;
+    sun.shadow.camera.far = 70;
+    sun.shadow.bias = -0.0008;
+    sun.shadow.normalBias = 0.04;
     sun.shadow.camera.updateProjectionMatrix();
   }
 
+  // Performance: every point light is evaluated for every pixel of every lit surface, so nine
+  // of them are expensive. We keep the nine lamp positions as data (and glowing bulbs), but only
+  // LAMP_SLOTS real lights, which fade over to whichever lamps are nearest the player.
+  const LAMP_SLOTS = lowFx ? 2 : 3;
+  const lampDefs = [];
   const lampBulbMat = new THREE.MeshBasicMaterial({ color: 0xfff1c8 });
   function lamp(x, y, z, { intensity = LIGHT.lamp, distance = LIGHT.lampDistance } = {}) {
-    const l = new THREE.PointLight(0xffe2b0, intensity, distance, 2);
-    l.position.set(x, y, z);
-    scene.add(l);
+    lampDefs.push({ x, y, z, intensity, distance });
     const bulb = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 8), lampBulbMat);
     bulb.position.set(x, y + 0.25, z);
     scene.add(bulb);
+  }
+  const lampSlots = [];
+  for (let i = 0; i < LAMP_SLOTS; i++) {
+    const light = new THREE.PointLight(0xffe2b0, 0, 10, 2);
+    scene.add(light);
+    lampSlots.push({ light, def: -1, k: 0 });
+  }
+  function updateLamps(dt, px, pz, snap) {
+    if (!lampDefs.length) return;
+    const ranked = lampDefs
+      .map((d, i) => ({ i, d2: (d.x - px) ** 2 + (d.z - pz) ** 2 }))
+      .sort((a, b) => a.d2 - b.d2)
+      .slice(0, LAMP_SLOTS)
+      .map((r) => r.i);
+    const wanted = new Set(ranked);
+    const taken = new Set(lampSlots.map((sl) => sl.def));
+    const free = ranked.filter((i) => !taken.has(i));
+    for (const sl of lampSlots) {
+      const keep = sl.def >= 0 && wanted.has(sl.def);
+      if (keep) {
+        sl.k = snap ? 1 : Math.min(1, sl.k + dt * 4);
+      } else {
+        sl.k = snap ? 0 : Math.max(0, sl.k - dt * 4);
+        if (sl.k <= 0.01 && free.length) {
+          const d = lampDefs[free.shift()];
+          sl.def = lampDefs.indexOf(d);
+          sl.light.position.set(d.x, d.y, d.z);
+          sl.light.distance = d.distance;
+          sl.k = snap ? 1 : 0;
+        }
+      }
+      sl.light.intensity = sl.def >= 0 ? lampDefs[sl.def].intensity * sl.k : 0;
+    }
   }
 
   // ------------------------------------------------------------------ ground + floors
@@ -547,6 +586,17 @@ export function buildWorld({ scene, lowFx = false }) {
   }
 
   function update(dt, t, { reducedMotion = false, playerPos = null } = {}) {
+    if (playerPos) {
+      updateLamps(dt, playerPos.x, playerPos.z, !lampsPlaced);
+      lampsPlaced = true;
+      if (sun.castShadow) {
+        // keep the shadow map centred on the player (snapped so shadow edges don't shimmer)
+        const sx = Math.round(playerPos.x * 2) / 2;
+        const sz = Math.round(playerPos.z * 2) / 2;
+        sun.target.position.set(sx, 0, sz);
+        sun.position.set(sx + SUN_OFFSET.x, SUN_OFFSET.y, sz + SUN_OFFSET.z);
+      }
+    }
     // markers bob + spin
     for (const it of interactables) {
       if (!it.marker.visible) continue;
@@ -588,7 +638,17 @@ export function buildWorld({ scene, lowFx = false }) {
     }
   }
 
+  let mergeInfo = null;
+  if (merge) {
+    try {
+      mergeInfo = kit.mergeStatic();
+    } catch (err) {
+      console.warn('Static mesh merge skipped:', err); // the world still works, just with more draw calls
+    }
+  }
+
   return {
+    mergeInfo,
     colliders, interactables, npcs, update, updateBoard, setAttention, setHighlight,
     getInteractable: (id) => interactables.find((i) => i.id === id) || null,
     title: GAME_TITLE,

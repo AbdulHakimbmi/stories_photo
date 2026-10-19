@@ -91,6 +91,7 @@ See [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) for a 3-minute script and [`doc
 - **`npm: command not found`:** install Node.js LTS and reopen the terminal.
 - **Port in use:** Vite picks the next free port and prints it; or run `npx vite --port 5180`.
 - **"WebGL not available" message / slow:** turn on hardware acceleration in the browser, or add `?low` to the address (`http://localhost:5173/?low`) to disable shadows and reduce effects.
+- **Laggy / low frame rate:** the game already merges static meshes, uses only three real lights at a time, keeps shadows near the player and lowers its resolution automatically if the frame rate stays under ~40 fps. To see what your machine is doing, open `http://localhost:5173/?fps` (shows fps, resolution ratio, draw calls). If it is still slow, try `?low` (no shadows, 1x resolution). Make sure the browser's hardware acceleration is on and, on a laptop, that it is plugged in and using the dedicated GPU. If the scene looks wrong after the performance changes, `?nomerge` turns the mesh merging off so you can tell me whether it is the cause.
 - **Scene too dark or too bright:** edit the `LIGHT` object at the top of `src/world/config.js` (ambient, hemi, sun, lamp) and save; the page reloads.
 - **Progress looks wrong:** Pause → *Reset demo*, or title screen → *Reset progress*.
 

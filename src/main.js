@@ -44,16 +44,32 @@ class Game {
 
     // ---- renderer
     const canvas = document.getElementById('game');
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.lowFx, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(this.lowFx ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+    // Performance: sharp-screen laptops (pixel ratio >= 1.5) do not need multisampling, and we cap
+    // the render resolution at 1.5x. If the frame rate stays low the resolution is reduced further
+    // (see adaptResolution), because drawing fewer pixels is the single biggest saving.
+    const dpr = window.devicePixelRatio || 1;
+    this.maxPixelRatio = this.lowFx ? 1 : Math.min(dpr, 1.5);
+    this.pixelRatio = this.maxPixelRatio;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.lowFx && dpr < 1.5, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.shadowMap.enabled = !this.lowFx;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.perf = { frames: 0, acc: 0, n: 0, since: 0 };
+    this.fpsBox = null;
+    if (q.has('fps')) { // add ?fps to the address to see a small performance read-out
+      this.fpsBox = document.createElement('div');
+      this.fpsBox.setAttribute('aria-hidden', 'true');
+      this.fpsBox.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:50;padding:3px 7px;font:12px/1.3 monospace;color:#fff;background:rgba(0,0,0,.6);border-radius:4px;pointer-events:none';
+      document.body.appendChild(this.fpsBox);
+      this.fpsAcc = 0; this.fpsN = 0;
+    }
+    this.frameCount = 0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); showFatal('The graphics context was lost (this can happen if the GPU is busy or the laptop sleeps).'); });
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 220);
-    this.world = buildWorld({ scene: this.scene, lowFx: this.lowFx });
+    this.world = buildWorld({ scene: this.scene, lowFx: this.lowFx, merge: !q.has('nomerge') });
 
     // ---- UI plumbing
     const overlayRoot = document.getElementById('overlays');
@@ -318,7 +334,35 @@ class Game {
       this.updateTarget();
     }
     this.world.update(dt, t, { reducedMotion: this.reducedMotion, playerPos: focus });
-    this.renderer.render(this.scene, this.camera);
+    this.frameCount++;
+    // While a panel covers the screen the world behind it barely changes: draw it every other frame.
+    const covered = this.mode === 'playing' && this.overlays.isOpen;
+    if (!covered || this.frameCount % 2 === 0) this.renderer.render(this.scene, this.camera);
+    if (!covered) this.adaptResolution(dt, t);
+    if (this.fpsBox) {
+      this.fpsAcc += dt; this.fpsN += 1;
+      if (this.fpsAcc >= 0.5) {
+        const info = this.renderer.info;
+        this.fpsBox.textContent = `${Math.round(this.fpsN / this.fpsAcc)} fps · ratio ${this.pixelRatio.toFixed(2)} · ${info.render.calls} draws · ${Math.round(info.render.triangles / 1000)}k tris`;
+        this.fpsAcc = 0; this.fpsN = 0;
+      }
+    }
+  }
+
+  /** If the average frame rate stays under ~40 fps, quietly render at a lower resolution. */
+  adaptResolution(dt, t) {
+    const perf = this.perf;
+    if (this.lowFx || document.hidden || t < 4) return; // ignore start-up (shader compiling)
+    perf.acc += dt;
+    perf.n += 1;
+    if (perf.acc < 2) return;
+    const avg = perf.acc / perf.n;
+    perf.acc = 0;
+    perf.n = 0;
+    if (avg > 1 / 40 || this.pixelRatio <= 0.75) return;
+    this.pixelRatio = Math.max(0.75, this.pixelRatio * 0.85);
+    this.renderer.setPixelRatio(this.pixelRatio);
+    this.resize();
   }
 }
 

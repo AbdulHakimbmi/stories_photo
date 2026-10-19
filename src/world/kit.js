@@ -51,6 +51,7 @@ export class Kit {
     mesh.castShadow = cast;
     mesh.receiveShadow = receive;
     if (name) mesh.name = name;
+    if (!parent) mesh.userData.mergeable = true;
     (parent || this.root).add(mesh);
     if (solid) this.col.addSolid(x - w / 2, x + w / 2, z - d / 2, z + d / 2, { y0: y, y1: y + h, cam });
     return mesh;
@@ -66,6 +67,7 @@ export class Kit {
     mesh.position.set(x, y + h / 2, z);
     mesh.castShadow = cast;
     mesh.receiveShadow = receive;
+    if (!parent) mesh.userData.mergeable = true;
     (parent || this.root).add(mesh);
     if (solid) this.col.addSolid(x - r, x + r, z - r, z + r, { y0: y, y1: y + h });
     return mesh;
@@ -75,6 +77,7 @@ export class Kit {
     const mesh = new THREE.Mesh(new THREE.ConeGeometry(r, h, seg), std(color));
     mesh.position.set(x, y + h / 2, z);
     mesh.castShadow = cast;
+    if (!parent) mesh.userData.mergeable = true;
     (parent || this.root).add(mesh);
     return mesh;
   }
@@ -85,6 +88,7 @@ export class Kit {
     mesh.scale.set(sx, sy, sz);
     mesh.castShadow = cast;
     mesh.receiveShadow = true;
+    if (!parent) mesh.userData.mergeable = true;
     (parent || this.root).add(mesh);
     return mesh;
   }
@@ -94,8 +98,75 @@ export class Kit {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, y, z);
     mesh.receiveShadow = true;
+    if (!parent) mesh.userData.mergeable = true;
     (parent || this.root).add(mesh);
     return mesh;
+  }
+
+  /**
+   * Performance: join the many small static meshes that share a material (and shadow flags)
+   * into a few big ones, so the GPU has dozens of draw calls instead of hundreds.
+   * Only plain, unnamed, untouched meshes placed straight into the kit root are merged.
+   * Returns { before, after } mesh counts. Any failure leaves the scene unchanged.
+   */
+  mergeStatic() {
+    const buckets = new Map();
+    for (const child of this.root.children) {
+      if (!child.isMesh || !child.userData.mergeable || child.name || child.children.length) continue;
+      const m = child.material;
+      if (!m || Array.isArray(m) || m.transparent) continue;
+      const key = `${m.uuid}|${child.castShadow ? 1 : 0}|${child.receiveShadow ? 1 : 0}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(child);
+    }
+    const v = new THREE.Vector3();
+    let before = 0;
+    let after = 0;
+    const jobs = [];
+    for (const list of buckets.values()) {
+      if (list.length < 2) continue;
+      let count = 0;
+      const geos = list.map((mesh) => {
+        mesh.updateMatrix();
+        const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+        count += g.attributes.position.count;
+        return g;
+      });
+      const pos = new Float32Array(count * 3);
+      const nor = new Float32Array(count * 3);
+      const uv = new Float32Array(count * 2);
+      let o = 0;
+      list.forEach((mesh, k) => {
+        const g = geos[k];
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrix);
+        const gp = g.attributes.position;
+        const gn = g.attributes.normal;
+        const gu = g.attributes.uv;
+        for (let i = 0; i < gp.count; i++, o++) {
+          v.fromBufferAttribute(gp, i).applyMatrix4(mesh.matrix);
+          pos[o * 3] = v.x; pos[o * 3 + 1] = v.y; pos[o * 3 + 2] = v.z;
+          v.fromBufferAttribute(gn, i).applyMatrix3(normalMatrix).normalize();
+          nor[o * 3] = v.x; nor[o * 3 + 1] = v.y; nor[o * 3 + 2] = v.z;
+          if (gu) { uv[o * 2] = gu.getX(i); uv[o * 2 + 1] = gu.getY(i); }
+        }
+      });
+      const merged = new THREE.BufferGeometry();
+      merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      merged.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      merged.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      merged.computeBoundingSphere();
+      const big = new THREE.Mesh(merged, list[0].material);
+      big.castShadow = list[0].castShadow;
+      big.receiveShadow = list[0].receiveShadow;
+      jobs.push({ list, big });
+      before += list.length;
+      after += 1;
+    }
+    for (const { list, big } of jobs) { // only touch the scene once everything was built successfully
+      for (const mesh of list) { this.root.remove(mesh); mesh.geometry.dispose(); }
+      this.root.add(big);
+    }
+    return { before, after };
   }
 }
 
