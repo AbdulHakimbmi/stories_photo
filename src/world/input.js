@@ -13,7 +13,7 @@ function isTyping(target) {
 export class Input {
   /**
    * @param {HTMLElement} canvas  element that receives drag + wheel
-   * @param {{onKey:(e:KeyboardEvent)=>void, onDrag:(dx:number,dy:number)=>void, onWheel:(dy:number)=>void, shouldCapture:()=>boolean}} cb
+   * @param {{onKey:(e:KeyboardEvent)=>void, onDrag:(dx:number,dy:number)=>void, onWheel:(dy:number)=>void, onTap?:(x:number,y:number)=>void, shouldCapture:()=>boolean}} cb
    */
   constructor(canvas, cb) {
     this.canvas = canvas;
@@ -42,6 +42,7 @@ export class Input {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       this.dragId = e.pointerId;
       this.last = { x: e.clientX, y: e.clientY };
+      this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
       try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       this.canvas.classList.add('dragging');
     };
@@ -55,6 +56,10 @@ export class Input {
     this.onPointerUp = (e) => {
       if (this.dragId !== e.pointerId) return;
       this.dragId = null;
+      // a short press that barely moved is a click/tap, not a camera drag
+      const d = this.down;
+      this.down = null;
+      if (d && e.type === 'pointerup' && this.cb.onTap && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6 && performance.now() - d.t < 600) this.cb.onTap(e.clientX, e.clientY);
       this.canvas.classList.remove('dragging');
     };
     this.onWheel = (e) => {

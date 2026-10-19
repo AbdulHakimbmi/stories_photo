@@ -1,52 +1,54 @@
 // =============================================================================
-//  main.js — wires everything together: renderer, world, player, state, UI.
+//  main.js — wires everything together: renderer, garden world, player, state, live session, UI.
 //  Reading order if you are new to the code:
-//    data/content.js  →  state/logic.js  →  world/world.js  →  ui/*.js  →  this file
+//    data/content.js → garden/state.js → net/live.js → world/garden.js + world/plant.js → ui/*.js → this file
+//
+//  Two modes share the same world and the same state object:
+//    • "live": a LiveSession talks to the garden server (phones upload, the host approves).
+//    • "demo": fictional memories drawn in code; nothing is uploaded and no server is needed.
 // =============================================================================
 import * as THREE from 'three';
 import './style.css';
 import { Overlays, makeAnnouncer } from './ui/dom.js';
 import { Sound } from './audio/sound.js';
-import {
-  GameStore, createActions, getBrowserStorage, loadSettings, saveSettings,
-  aishaTreeFor, publicRecords, canContribute, attentionIds,
-} from './state/logic.js';
-import { buildWorld } from './world/world.js';
+import { loadSettings, saveSettings } from './settings.js';
+import { GardenState } from './garden/state.js';
+import { LiveSession, ApiError, createSession, loadSavedHost, saveHost, forgetHost } from './net/live.js';
+import { DEMO_MEMORIES, DEMO_NEXT, GAME_TITLE } from './data/content.js';
+import { drawIllustration } from './art/illustrations.js';
+import { buildGarden } from './world/garden.js';
 import { Player } from './world/player.js';
 import { Input } from './world/input.js';
-import { LOCATIONS } from './world/config.js';
+import { LOCATIONS, OVERVIEW } from './world/config.js';
 import { createHud } from './ui/hud.js';
-import { openDialogue, openExamine } from './ui/dialogue.js';
-import { openJournal } from './ui/journal.js';
-import { openArchive } from './ui/archive.js';
-import { openTitle, openIntro, openPause, openEnding } from './ui/screens.js';
+import { createDock } from './ui/host-dock.js';
+import { openMemoryPanel } from './ui/memory-panel.js';
+import { openTitle, openMenu, openActivity, openNotice } from './ui/screens.js';
 
-const NEEDS_BRIEFING = new Set(['lim', 'mei', 'm1_photo', 'm1_pot', 'm1_note', 'devi', 'rahman', 'm2_photo', 'salmah']);
-const EXAMINE_IDS = new Set(['m1_photo', 'm1_pot', 'm1_note', 'm2_photo']);
+const OV_POS = new THREE.Vector3(...OVERVIEW.pos);
+const OV_LOOK = new THREE.Vector3(...OVERVIEW.look);
 
 class Game {
   constructor() {
-    const { storage, persistent } = getBrowserStorage();
-    this.storage = storage;
-    this.settings = loadSettings(storage, window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    this.store = new GameStore(storage, { persistent });
-    this.store.load('play');
-    this.mode = 'title';           // 'title' | 'playing'
+    this.settings = loadSettings();
+    this.mode = 'title';          // 'title' | 'playing'
+    this.kind = 'demo';           // 'live' | 'demo' (what the garden currently shows)
+    this.overview = false;
+    this.blend = 0;               // 0 = walking camera, 1 = whole-garden camera
     this.target = null;
-    this.notice = null;
-    this.boardSignature = '';
+    this.live = null;
+    this.memoryView = null;
+    this.state = new GardenState();
     this.sound = new Sound();
     this.sound.setMuted(this.settings.muted);
     document.documentElement.classList.toggle('reduce-motion', this.settings.reducedMotion);
+    document.title = `${GAME_TITLE} — a proposed future experience (prototype)`;
 
     const q = new URLSearchParams(window.location.search);
     this.lowFx = q.has('low');
 
-    // ---- renderer
+    // ---- renderer (performance choices explained in the README)
     const canvas = document.getElementById('game');
-    // Performance: sharp-screen laptops (pixel ratio >= 1.5) do not need multisampling, and we cap
-    // the render resolution at 1.5x. If the frame rate stays low the resolution is reduced further
-    // (see adaptResolution), because drawing fewer pixels is the single biggest saving.
     const dpr = window.devicePixelRatio || 1;
     this.maxPixelRatio = this.lowFx ? 1 : Math.min(dpr, 1.5);
     this.pixelRatio = this.maxPixelRatio;
@@ -54,7 +56,8 @@ class Game {
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.shadowMap.enabled = !this.lowFx;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.perf = { frames: 0, acc: 0, n: 0, since: 0 };
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.perf = { acc: 0, n: 0 };
     this.fpsBox = null;
     if (q.has('fps')) { // add ?fps to the address to see a small performance read-out
       this.fpsBox = document.createElement('div');
@@ -64,225 +67,368 @@ class Game {
       this.fpsAcc = 0; this.fpsN = 0;
     }
     this.frameCount = 0;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); showFatal('The graphics context was lost (this can happen if the GPU is busy or the laptop sleeps).'); });
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); showFatal('The graphics context was lost (this can happen if the GPU is busy or the laptop sleeps). Reload the page; a live session can be resumed from the title screen.'); });
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 220);
-    this.world = buildWorld({ scene: this.scene, lowFx: this.lowFx, merge: !q.has('nomerge') });
+    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 240);
+    this.garden = buildGarden({ scene: this.scene, lowFx: this.lowFx, merge: !q.has('nomerge'), resolveImage: (m) => this.resolveImage(m) });
+    this.raycaster = new THREE.Raycaster();
+    this._ndc = new THREE.Vector2();
+    this._look = new THREE.Vector3();
 
     // ---- UI plumbing
     const overlayRoot = document.getElementById('overlays');
     this.overlays = new Overlays(overlayRoot);
     this.announce = makeAnnouncer(overlayRoot);
-    this.actions = createActions(this.store, {
-      toast: (m) => { this.hud.toast(m); this.announce(m); },
-      sfx: (n) => this.sound.play(n),
-    });
     this.hud = createHud(this);
     this.hud.setVisible(false);
+    this.dock = createDock(this);
 
     // ---- input + player
     this.input = new Input(canvas, {
       onKey: (e) => this.onKey(e),
       onDrag: (dx, dy) => this.player.rotate(dx, dy),
       onWheel: (dy) => this.player.zoom(dy),
+      onTap: (x, y) => this.onTap(x, y),
       shouldCapture: () => this.mode === 'playing' && !this.overlays.isOpen,
     });
-    this.player = new Player({ scene: this.scene, camera: this.camera, colliders: this.world.colliders, input: this.input });
+    this.player = new Player({ scene: this.scene, camera: this.camera, colliders: this.garden.colliders, input: this.input });
     this.player.model.visible = false;
 
     this.overlays.onChange = () => {
       this.input.clear();                       // a panel opening/closing can never leave a key "stuck"
-      if (this.overlays.isOpen) { this.hud.setPrompt(null); this.world.setHighlight(null); this.target = null; }
+      if (this.overlays.isOpen) { this.hud.setPrompt(null); this.garden.setHighlight(null); this.target = null; }
       document.body.classList.toggle('has-overlay', this.overlays.isOpen);
     };
-    // Keep HUD, board texture and markers in sync with every state change (one subscription only).
-    this.store.subscribe(() => this.refresh());
+
+    this.state.subscribe((change) => this.onStateChange(change));
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
 
     this.clock = new THREE.Clock();
     this.loop = this.loop.bind(this);
-    this.refresh();
+    this.hud.refresh();
     openTitle(this);
     requestAnimationFrame(this.loop);
     window.__game = this; // handy for debugging in the browser console
   }
 
-  get p() { return this.store.p; }
   get reducedMotion() { return !!this.settings.reducedMotion; }
 
   // ------------------------------------------------------------------ settings
   setMuted(m) {
     this.settings.muted = !!m;
     this.sound.setMuted(this.settings.muted);
-    saveSettings(this.storage, this.settings);
+    saveSettings(this.settings);
     this.hud.paintSound();
     if (!m) this.sound.play('click');
   }
-
   setReducedMotion(v) {
     this.settings.reducedMotion = !!v;
     document.documentElement.classList.toggle('reduce-motion', this.settings.reducedMotion);
-    saveSettings(this.storage, this.settings);
+    saveSettings(this.settings);
   }
 
-  storageWarning() {
-    if (!this.store.persistent) return 'Local storage is unavailable in this browser, so progress cannot be saved. The demo still works, but progress is lost when you close the page.';
-    return this.store.loadWarning;
+  // ------------------------------------------------------------------ images for the 3D photo cards
+  resolveImage(m) {
+    if (m.fictional && m.illus) return { canvas: drawIllustration(m.illus, 512, 341) };
+    if (this.live) return { url: this.live.publicImageUrl(m.id, 'thumb') };
+    return null;
   }
-  takeNotice() { const n = this.notice; this.notice = null; return n; }
-  playStarted() { return !!(this.p.started || this.p.briefed); }
 
-  // ------------------------------------------------------------------ flow
-  startPlay() {
-    this.sound.unlock();
+  // ------------------------------------------------------------------ modes
+  savedHost() { return loadSavedHost(); }
+  forgetSaved() {
+    forgetHost();
     this.overlays.closeAll();
-    this.store.load('play');
-    if (!this.p.introSeen) {
-      openIntro(this, () => { this.actions.markIntroSeen(); this.enterWorld(true); });
-    } else {
-      this.enterWorld(false);
+    openTitle(this, { notice: 'The saved session was forgotten in this browser.' });
+  }
+
+  /** Throw away whatever the garden shows now (before starting something else). */
+  resetWorld() {
+    this.overlays.closeAll();
+    if (this.live) { this.live.stop(); this.live = null; }
+    this.state.clear();
+    this.state.patchMeta({ name: '', locked: false, ended: false }, false);
+    this.garden.clearMemories();
+    this.garden.setGathering(false);
+    this.dock.reset();
+    this.overview = false;
+    this.blend = 0;
+    this.memoryView = null;
+    this.lostShown = false;
+  }
+
+  async startLive() {
+    const creds = await createSession('Our Memory Garden');
+    saveHost({ hostToken: creds.hostToken, joinToken: creds.joinToken, name: creds.name });
+    await this.beginLive(creds, true);
+  }
+
+  async resumeLive() {
+    const saved = loadSavedHost();
+    if (!saved) throw new Error('There is no saved session in this browser.');
+    try { await this.beginLive(saved, false); } catch (err) {
+      if (err instanceof ApiError && [401, 404, 410].includes(err.status)) {
+        forgetHost();
+        throw new Error('That session has ended or expired, so it was forgotten. Start a new live session instead.');
+      }
+      throw err;
     }
   }
 
-  startPresenter() {
-    this.sound.unlock();
-    this.overlays.closeAll();
-    this.store.load('presenter');
-    this.enterWorld(false);
-    this.hud.toast('Presenter mode: all three missions are ready. None is completed.', 6000);
+  async beginLive(creds, fresh) {
+    this.resetWorld();
+    this.kind = 'live';
+    const live = new LiveSession(creds, this.state, {
+      onStatus: (s) => { if (this.live === live) this.onConnectionStatus(s); },
+      onCounts: (c) => { if (this.live === live) this.onCounts(c); },
+    });
+    this.live = live;
+    try { await live.start(); } catch (err) {
+      live.stop();
+      this.live = null;
+      this.kind = 'demo';
+      this.state.clear();
+      throw err;
+    }
+    this.enterWorld();
+    this.dock.open('invite');
+    if (fresh) this.hud.toast('Scan the QR code with a phone on the same Wi-Fi to add a photograph.', 8000);
+    else this.hud.toast('Session resumed.');
   }
 
-  enterWorld(first) {
+  startDemo() {
+    this.resetWorld();
+    this.kind = 'demo';
+    this.state.replaceAll({ memories: DEMO_MEMORIES });
+    this.enterWorld();
+    this.hud.toast('Fictional demo: click a plant, or use the Demo panel (H).', 7000);
+  }
+
+  plantNextDemo() {
+    const next = DEMO_NEXT.find((m) => !this.state.get(m.id));
+    if (!next) return;
+    this.state.upsertMemory(next);
+    this.dock.onGardenChanged();
+  }
+
+  resetDemo() {
+    if (this.kind !== 'demo') return;
+    this.overlays.closeAll();
+    this.state.replaceAll({ memories: DEMO_MEMORIES });
+    this.garden.setGathering(false);
+    this.dock.onGardenChanged();
+    this.hud.toast('Demo reset.');
+  }
+
+  enterWorld() {
+    this.overlays.closeAll();
     this.mode = 'playing';
     this.player.model.visible = true;
     this.hud.setVisible(true);
-    this.teleportTo('deck');
-    this.refresh();
-    if (first) this.hud.toast('Press E near Aisha to begin. Drag to look around.', 7000);
+    this.teleportTo('gate');
+    this.hud.refresh();
+    document.getElementById('game').focus({ preventScroll: true });
   }
 
-  returnToTitle() {
-    this.overlays.closeAll();
+  returnToTitle(opts = {}) {
+    this.resetWorld();
+    this.kind = 'demo';
     this.mode = 'title';
     this.target = null;
     this.hud.setPrompt(null);
     this.hud.setVisible(false);
     this.player.model.visible = false;
-    this.store.load('play');
-    openTitle(this);
+    this.hud.refresh();
+    openTitle(this, opts);
   }
 
-  resetCurrentProfile() {
-    this.overlays.closeAll();
-    this.store.reset();
-    if (this.mode === 'playing') {
-      if (this.store.profile === 'play' && !this.p.introSeen) {
-        this.hud.setVisible(false);
-        openIntro(this, () => { this.actions.markIntroSeen(); this.enterWorld(true); });
-      } else {
-        this.enterWorld(false);
-        this.hud.toast(this.store.profile === 'presenter' ? 'Presenter missions reset. Ready to demonstrate.' : 'Demo reset.');
-      }
+  afterSessionDeleted() { this.returnToTitle({ notice: 'All data for that session was deleted from the server.' }); }
+
+  connectionLabel() {
+    const s = this.live ? this.live.status : 'offline';
+    return { online: 'Connected', connecting: 'Connecting…', offline: 'Reconnecting…', expired: 'Session expired', ended: 'Session unavailable' }[s] || s;
+  }
+
+  onConnectionStatus(s) {
+    this.hud.refresh();
+    if (this.dock.isOpen) this.dock.onMetaChanged();
+    if ((s === 'expired' || s === 'ended') && !this.lostShown && this.mode === 'playing') {
+      this.lostShown = true;
+      const expired = s === 'expired';
+      openNotice(this, {
+        title: expired ? 'This session expired' : 'The server no longer knows this session',
+        paragraphs: expired
+          ? ['Sessions are temporary. This one reached its time limit and its photographs and stories were deleted from the server.']
+          : ['The session may have been deleted, or the server’s data was cleared and restarted. Photographs and stories from it are no longer stored.'],
+        buttonLabel: 'Back to the title screen',
+        onClose: () => { forgetHost(); this.returnToTitle({ notice: expired ? 'The session expired and was deleted.' : 'The session is no longer available.' }); },
+      });
     }
   }
 
-  resetAllProgress() {
-    this.store.resetAll();
-    this.store.load('play');
-    this.notice = 'All demo progress was cleared.';
-    this.overlays.closeAll();
-    openTitle(this);
+  onCounts(c) {
+    const { before, after } = this.dock.setCounts(c);
+    this.hud.refresh();
+    if (this.mode === 'playing' && after > before) {
+      this.sound.play('soft');
+      const n = after;
+      this.hud.toast(`${n} item${n === 1 ? ' is' : 's are'} waiting for your approval.`, { ms: 7000, action: { label: 'Review', run: () => this.toggleDock(true, 'queue') } });
+    }
   }
 
-  /** "I'm stuck" — always works, from anywhere. */
-  recoverPlayer() {
-    this.overlays.closeAll();
-    this.input.clear();
-    this.teleportTo('deck');
-    this.hud.toast('Back at the void deck.');
+  /** The host panel can also be used to type a recollection (it still waits for approval). */
+  async addRecollection(memoryId, { name, text }) {
+    if (this.kind === 'live') {
+      await this.live.addResponse(memoryId, { name, text });
+      this.hud.toast('Sent. It appears on the plant after you approve it in the host panel.', 6000);
+      this.announce('Recollection sent for approval.');
+    } else {
+      this.state.upsertResponse(memoryId, { id: `demo-r-${Date.now()}`, name, text });
+      this.announce('Recollection added to the demonstration plant.');
+    }
   }
 
+  // ------------------------------------------------------------------ state → world
+  onStateChange(change) {
+    const g = this.garden;
+    const live = !change.snapshot;
+    for (const id of change.removed || []) {
+      g.removeMemory(id);
+      if (this.live) this.live.forgetBlob(id);
+      if (this.memoryView && this.memoryView.id === id) { this.memoryView.close(); this.hud.toast('That memory was removed.'); }
+    }
+    for (const id of change.added || []) {
+      const m = this.state.get(id);
+      if (!m) continue;
+      g.addMemory(m, { animate: live && !this.reducedMotion });
+      if (live) {
+        this.sound.play('chime');
+        this.hud.toast(`A new memory has grown: “${m.title}”`, { ms: 7000, action: { label: 'Walk there', run: () => this.focusMemory(id) } });
+        this.announce(`A new memory has grown: ${m.title}`);
+      }
+    }
+    for (const id of change.updated || []) {
+      const m = this.state.get(id);
+      if (!m) continue;
+      g.updateMemory(m, { newResponse: change.newResponse || null });
+      if (change.newResponse) {
+        this.sound.play('open');
+        this.hud.toast(`A recollection was added to “${m.title}”.`);
+      }
+    }
+    if (change.snapshot || (change.added && change.added.length) || (change.removed && change.removed.length)) {
+      const was = g.gatheringShown();
+      const prog = this.state.progress();
+      g.setGathering(prog.complete, { animate: live && prog.complete && !was });
+      if (live && prog.complete && !was) {
+        this.sound.play('chime');
+        this.hud.toast('A gathering place has grown in the middle of the garden.', { ms: 9000, action: { label: 'Go and see', run: () => this.teleportTo('plaza') } });
+        this.announce('A gathering place has grown in the middle of the garden.');
+      }
+    }
+    if (this.memoryView && (change.meta || (change.updated || []).includes(this.memoryView.id) || change.snapshot)) this.memoryView.refresh();
+    this.dock.onGardenChanged();
+    if (change.meta) this.dock.onMetaChanged();
+    this.hud.refresh();
+  }
+
+  // ------------------------------------------------------------------ navigation
   teleportTo(key) {
     const loc = LOCATIONS[key];
     if (!loc) return;
     this.overlays.closeAll();
+    this.setOverview(false);
     this.player.teleport(loc.x, loc.z, loc.yaw);
   }
 
-  // ------------------------------------------------------------------ panels
-  openPauseMenu() { if (this.mode === 'playing' && !this.overlays.has('pause')) openPause(this); }
-  openJournal(opts) { if (!this.overlays.has('journal')) openJournal(this, opts); }
-  toggleJournal() {
-    if (this.overlays.has('journal')) { this.overlays.closeById('journal'); return; }
-    if (this.mode === 'playing' && !this.overlays.isOpen) { this.sound.play('open'); openJournal(this); }
+  /** Stand on the path side of a memory plant, facing its photograph. */
+  focusMemory(id) {
+    const lay = this.garden.plantPosition(id);
+    if (!lay) return;
+    this.overlays.closeAll();
+    this.setOverview(false);
+    const dir = lay.yaw === 0 ? 1 : -1; // photo cards face the path
+    this.player.teleport(lay.card.x, lay.card.z + dir * 1.7, lay.yaw);
   }
-  openArchive(opts) { if (!this.overlays.has('archive')) openArchive(this, opts); }
-  openEnding() { if (!this.overlays.has('ending')) openEnding(this); }
-  afterJournalClosed() { this.refresh(); }
-  afterArchiveClosed() { this.refresh(); }
+
+  recoverPlayer() {
+    this.overlays.closeAll();
+    this.input.clear();
+    this.teleportTo('gate');
+    this.hud.toast('Back at the garden gate.');
+  }
+
+  setOverview(on) {
+    this.overview = !!on;
+    this.hud.refresh();
+  }
+  toggleOverview() {
+    if (this.mode !== 'playing' || this.overlays.isOpen) return;
+    this.setOverview(!this.overview);
+    this.announce(this.overview ? 'Showing the whole garden.' : 'Back to walking.');
+  }
+
+  toggleDock(force, tab) {
+    if (this.mode !== 'playing') return;
+    if (force === true) this.dock.open(tab); else this.dock.toggle(force);
+    this.hud.refresh();
+  }
+
+  // ------------------------------------------------------------------ panels
+  openMenu() { if (this.mode === 'playing' && !this.overlays.has('pause')) openMenu(this); }
+  openActivity() { if (this.mode === 'playing' && !this.overlays.has('activity')) { this.sound.play('open'); openActivity(this); } }
+  openMemory(id) {
+    if (this.mode !== 'playing' || !this.state.get(id)) return;
+    if (this.overlays.has('memory')) this.overlays.closeById('memory');
+    this.sound.play('open');
+    this.memoryView = openMemoryPanel(this, id);
+  }
 
   // ------------------------------------------------------------------ interaction
   interact() {
-    if (this.mode !== 'playing' || this.overlays.isOpen || !this.target) return;
-    this.runInteraction(this.target.id);
-  }
-
-  runInteraction(id) {
-    const p = this.p;
-    this.sound.play('open');
-    if (!p.briefed && NEEDS_BRIEFING.has(id)) { openDialogue(this, 'hint_unbriefed'); return; }
-    if (EXAMINE_IDS.has(id)) { openExamine(this, id); return; }
-    switch (id) {
-      case 'aisha':
-        openDialogue(this, aishaTreeFor(p), { onEnd: (marker) => { if (marker === 'summary') this.openEnding(); } });
-        break;
-      case 'lim': openDialogue(this, 'lim'); break;
-      case 'mei': openDialogue(this, 'mei'); break;
-      case 'devi': openDialogue(this, 'devi'); break;
-      case 'rahman': openDialogue(this, 'rahman'); break;
-      case 'salmah': openDialogue(this, p.m3.done ? 'salmah_done' : 'salmah'); break;
-      case 'board': this.openArchive({ tab: 'board' }); break;
-      case 'kiosk': this.openArchive({ tab: 'contribute' }); break;
-      default: break;
-    }
+    if (this.mode !== 'playing' || this.overlays.isOpen || this.overview || !this.target) return;
+    if (this.target.kind === 'memory') this.openMemory(this.target.id);
+    else if (this.target.kind === 'gathering') this.openActivity();
   }
 
   updateTarget() {
-    if (this.overlays.isOpen || this.mode !== 'playing') return;
+    if (this.overlays.isOpen || this.mode !== 'playing' || this.overview) {
+      if (this.target) { this.target = null; this.garden.setHighlight(null); this.hud.setPrompt(null); }
+      return;
+    }
     let best = null;
     let bestD = Infinity;
     const px = this.player.pos.x;
     const pz = this.player.pos.z;
-    for (const it of this.world.interactables) {
+    for (const it of this.garden.interactables) {
       const d = Math.hypot(px - it.pos.x, pz - it.pos.z);
       if (d <= it.range && d < bestD) { best = it; bestD = d; }
     }
-    if (best !== this.target) {
+    if (best !== this.target || (best && best.label !== this._lastLabel)) {
       this.target = best;
-      this.world.setHighlight(best ? best.id : null);
+      this._lastLabel = best ? best.label : null;
+      this.garden.setHighlight(best && best.kind === 'memory' ? best.id : null);
       this.hud.setPrompt(best ? best.label : null);
     }
   }
 
-  /** Keep the HUD, the 3D memory board and the floating markers in sync with the state. */
-  refresh() {
-    if (!this.hud || !this.world) return;
-    const p = this.p;
-    this.hud.refresh();
-    const pub = publicRecords(p);
-    const sig = pub.map((r) => `${r.id}:${r.title}:${r.contributors}`).join('|');
-    if (sig !== this.boardSignature) {
-      this.boardSignature = sig;
-      this.world.updateBoard(pub);        // ONLY public records are ever drawn on the wall
+  onTap(x, y) {
+    if (this.mode !== 'playing' || this.overlays.isOpen) return;
+    const canvas = this.renderer.domElement;
+    const r = canvas.getBoundingClientRect();
+    this._ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(this._ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.garden.pickMeshes(), false);
+    if (hits.length) {
+      const id = hits[0].object.userData.memoryId;
+      if (id) this.openMemory(id);
     }
-    this.world.setAttention(this.mode === 'playing' || this.mode === 'title' ? attentionIds(p) : []);
   }
 
-  // ------------------------------------------------------------------ input
+  // ------------------------------------------------------------------ keys
   onKey(e) {
     this.sound.unlock();
     if (e.code === 'Escape') {
@@ -293,19 +439,18 @@ class Game {
         else if (top.closable) top.close();
       } else if (this.mode === 'playing') {
         e.preventDefault();
-        this.openPauseMenu();
+        if (this.dock.isOpen) this.toggleDock(false);
+        else if (this.overview) this.setOverview(false);
+        else this.openMenu();
       }
       return;
     }
     if (e.repeat) return;
     if (e.code === 'KeyM') { this.setMuted(!this.settings.muted); return; }
-    if (this.mode !== 'playing') return;
-    if (this.overlays.isOpen) {
-      if (e.code === 'KeyJ' && this.overlays.top && this.overlays.top.id === 'journal') this.overlays.top.close();
-      return;
-    }
+    if (this.mode !== 'playing' || this.overlays.isOpen) return;
     if (e.code === 'KeyE') { e.preventDefault(); this.interact(); }
-    else if (e.code === 'KeyJ') { e.preventDefault(); this.toggleJournal(); }
+    else if (e.code === 'KeyG') this.toggleOverview();
+    else if (e.code === 'KeyH') this.toggleDock();
     else if (e.code === 'KeyC') this.player.recenter();
   }
 
@@ -324,16 +469,27 @@ class Game {
     const t = this.clock.elapsedTime;
     let focus = this.player.pos;
     if (this.mode === 'title') {
-      // slow, calm drift across the void deck behind the title screen
-      const a = this.reducedMotion ? 0.4 : t * 0.12;
-      this.camera.position.set(-5 + Math.sin(a) * 3.5, 2.0, 5.2);
-      this.camera.lookAt(-5 + Math.sin(a) * 1.5, 1.4, -4);
-      focus = { x: -5, y: 0, z: -3 };
+      // slow, calm drift above the garden behind the title screen
+      const a = this.reducedMotion ? 0.5 : t * 0.07;
+      this.camera.position.set(Math.sin(a) * 24, 11 + Math.sin(a * 0.7) * 1.5, 4 + Math.cos(a) * 18);
+      this.camera.lookAt(0, 0.8, 0);
+      focus = { x: 0, y: 0, z: 0 };
     } else {
-      this.player.update(dt, { canMove: !this.overlays.isOpen, reducedMotion: this.reducedMotion });
+      this.player.update(dt, { canMove: !this.overlays.isOpen && !this.overview, reducedMotion: this.reducedMotion });
       this.updateTarget();
+      const goal = this.overview ? 1 : 0;
+      this.blend += (goal - this.blend) * Math.min(1, dt * (this.reducedMotion ? 60 : 3.5));
+      if (Math.abs(goal - this.blend) < 0.004) this.blend = goal;
+      if (this.blend > 0) {
+        const e = this.blend * this.blend * (3 - 2 * this.blend);
+        const head = this._look.set(this.player.pos.x, 1.3, this.player.pos.z).lerp(OV_LOOK, e);
+        this.camera.position.lerp(OV_POS, e);
+        this.camera.lookAt(head);
+        this.player.model.visible = true;
+      }
+      if (this.overview) focus = { x: 0, y: 0, z: 0 };
     }
-    this.world.update(dt, t, { reducedMotion: this.reducedMotion, playerPos: focus });
+    this.garden.update(dt, t, { reducedMotion: this.reducedMotion, playerPos: focus });
     this.frameCount++;
     // While a panel covers the screen the world behind it barely changes: draw it every other frame.
     const covered = this.mode === 'playing' && this.overlays.isOpen;
@@ -370,6 +526,8 @@ function showFatal(message) {
   const el = document.getElementById('fallback');
   if (!el) return;
   el.hidden = false;
+  const reload = document.getElementById('reload-btn'); // no inline handlers: the page's security policy forbids them
+  if (reload && !reload.dataset.bound) { reload.dataset.bound = '1'; reload.addEventListener('click', () => location.reload()); }
   const msg = el.querySelector('[data-msg]');
   if (msg) msg.textContent = message;
 }

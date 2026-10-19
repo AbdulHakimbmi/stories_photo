@@ -1,4 +1,6 @@
 node_modules
-dist
-.DS_Store
+/dist/
+/data/
 *.zip
+.env
+.DS_Store

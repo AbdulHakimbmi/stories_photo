@@ -1,39 +1,32 @@
 // =============================================================================
-//  hud.js — on-screen heads-up display: objective, progress, buttons, interaction prompt,
-//  toasts, and the presenter-mode control panel.
+//  hud.js — on-screen heads-up display: session chips, gathering-place progress, buttons,
+//  the "press E" prompt and toasts.
 // =============================================================================
-import { h, clear } from './dom.js';
-import { MISSIONS, MISSION_IDS } from '../data/content.js';
-import { LOCATIONS } from '../world/config.js';
-import { objectiveFor, progressLabel, missionStatus, STATUS_LABEL } from '../state/logic.js';
-import { openConfirm } from './screens.js';
-
-const CUES = [
-  ['0:00', 'Void deck: point out the “proposed future” framing, Aisha, the empty public board and the kiosk.'],
-  ['0:25', 'Jump to the Lim home. Examine the photo, talk to Lim and Mei, then in the journal attach two verified details, keep both recollections and choose the agreed sharing.'],
-  ['1:10', 'Jump to the corridor. Hear both neighbours, ask about names, then keep both perspectives and mark the date uncertain.'],
-  ['1:50', 'Jump to the quiet corner. Try “Public” so Auntie Salmah gently explains her wish, correct to family-only.'],
-  ['2:20', 'Short on time? Use a clearly labelled “staged” shortcut for anything skipped. Then use the kiosk to contribute a sample memory.'],
-  ['2:45', 'Open the archive: public board versus restricted list. Return to Aisha for the summary.'],
-];
+import { h } from './dom.js';
+import { GAME_TITLE } from '../data/content.js';
 
 export function createHud(game) {
   const root = document.getElementById('hud');
   const toasts = document.getElementById('toasts');
-  const presenterRoot = document.getElementById('presenter');
 
-  const progress = h('div', { class: 'hud__progress' });
-  const objective = h('div', { class: 'hud__objective' });
-  const status = h('div', { class: 'hud__status', 'aria-label': 'Progress and objective' }, progress, objective);
+  const modeChip = h('span', { class: 'hchip' });
+  const connChip = h('span', { class: 'hchip', role: 'status' });
+  const lockChip = h('span', { class: 'hchip hchip--warn', hidden: true }, 'New uploads paused');
+  const actBtn = h('button', { type: 'button', class: 'hud__progress', onClick: () => game.openActivity(), 'aria-label': 'Gathering place activity' });
+  const status = h('div', { class: 'hud__status' },
+    h('div', { class: 'hud__name' }, GAME_TITLE),
+    h('div', { class: 'hud__chips' }, modeChip, connChip, lockChip),
+    actBtn);
 
-  const journalBtn = h('button', { type: 'button', class: 'btn btn--hud', onClick: () => game.toggleJournal(), 'aria-label': 'Open memory journal (J)' }, 'Journal ', h('kbd', null, 'J'));
+  const hostBtn = h('button', { type: 'button', class: 'btn btn--hud', onClick: () => game.toggleDock() });
+  const viewBtn = h('button', { type: 'button', class: 'btn btn--hud', onClick: () => game.toggleOverview() });
   const soundBtn = h('button', { type: 'button', class: 'btn btn--hud', onClick: () => game.setMuted(!game.settings.muted) });
-  const pauseBtn = h('button', { type: 'button', class: 'btn btn--hud', onClick: () => game.openPauseMenu(), 'aria-label': 'Pause and settings (Escape)' }, 'Pause ', h('kbd', null, 'Esc'));
-  const buttons = h('div', { class: 'hud__buttons' }, journalBtn, soundBtn, pauseBtn);
+  const menuBtn = h('button', { type: 'button', class: 'btn btn--hud', onClick: () => game.openMenu(), 'aria-label': 'Menu (Escape)' }, 'Menu ', h('kbd', null, 'Esc'));
+  const buttons = h('div', { class: 'hud__buttons' }, hostBtn, viewBtn, soundBtn, menuBtn);
 
   const promptLabel = h('span', { class: 'prompt__label' });
   const prompt = h('button', { type: 'button', class: 'prompt', hidden: true, onClick: () => game.interact() }, h('kbd', null, 'E'), promptLabel);
-  const hint = h('p', { class: 'hud__hint' }, 'WASD / arrows move · drag to look around · E interact · J journal');
+  const hint = h('p', { class: 'hud__hint' }, 'WASD / arrows move · drag to look · click a plant to open it · G whole garden · H host panel');
 
   root.append(status, buttons, prompt, hint);
 
@@ -43,12 +36,28 @@ export function createHud(game) {
   }
 
   function refresh() {
-    const p = game.p;
-    progress.textContent = progressLabel(p);
-    objective.textContent = '';
-    objective.append(h('strong', null, 'Objective: '), objectiveFor(p));
+    const live = game.kind === 'live';
+    const st = game.state.meta;
+    modeChip.textContent = live ? `Live session${st.name ? ` — ${st.name}` : ''}` : 'Fictional demo';
+    modeChip.classList.toggle('hchip--demo', !live);
+    connChip.hidden = !live;
+    if (live) {
+      const label = game.connectionLabel();
+      connChip.textContent = label;
+      connChip.classList.toggle('hchip--bad', game.live && game.live.status !== 'online');
+      connChip.classList.toggle('hchip--ok', game.live && game.live.status === 'online');
+    }
+    lockChip.hidden = !(live && st.locked && !st.ended);
+    if (live && st.ended) { lockChip.hidden = false; lockChip.textContent = 'Session ended'; } else lockChip.textContent = 'New uploads paused';
+    const prog = game.state.progress();
+    actBtn.textContent = prog.complete ? 'Gathering place: grown' : `Gathering place: ${prog.count} of ${prog.items.length}`;
+    const n = game.dock ? game.dock.pending : 0;
+    hostBtn.textContent = '';
+    hostBtn.append(live ? 'Host panel' : 'Demo panel', n ? h('span', { class: 'count', 'aria-label': `${n} waiting for approval` }, String(n)) : null, ' ', h('kbd', null, 'H'));
+    hostBtn.setAttribute('aria-expanded', String(!!(game.dock && game.dock.isOpen)));
+    viewBtn.textContent = game.overview ? 'Back to walking' : 'View whole garden';
+    viewBtn.setAttribute('aria-pressed', String(!!game.overview));
     paintSound();
-    paintPresenter();
   }
 
   function setPrompt(label) {
@@ -57,53 +66,18 @@ export function createHud(game) {
     prompt.hidden = false;
   }
 
-  function setVisible(visible) {
-    root.hidden = !visible;
-    presenterRoot.hidden = !visible || game.store.profile !== 'presenter';
-  }
+  function setVisible(visible) { root.hidden = !visible; }
 
-  function toast(msg, ms = 4500) {
-    const t = h('div', { class: 'toast' }, msg);
+  /** @param {{ms?:number, action?:{label:string, run:()=>void}}} opts */
+  function toast(msg, opts = 4500) {
+    const o = typeof opts === 'number' ? { ms: opts } : (opts || {});
+    const t = h('div', { class: 'toast' }, h('span', null, msg));
+    if (o.action) {
+      t.appendChild(h('button', { type: 'button', class: 'toast__btn', onClick: () => { t.remove(); o.action.run(); } }, o.action.label));
+    }
     toasts.appendChild(t);
     while (toasts.children.length > 3) toasts.removeChild(toasts.firstChild);
-    setTimeout(() => t.remove(), ms);
-  }
-
-  // ---------------------------------------------------------------- presenter panel
-  let presenterOpen = true;
-  function paintPresenter() {
-    const isPresenter = game.store.profile === 'presenter' && game.mode === 'playing';
-    presenterRoot.hidden = !isPresenter;
-    if (!isPresenter) return;
-    const p = game.p;
-    const wasOpen = presenterRoot.querySelector('details');
-    if (wasOpen) presenterOpen = wasOpen.open;
-    clear(presenterRoot);
-    const details = h('details', { class: 'presenter', open: presenterOpen },
-      h('summary', null, 'Presenter tools'),
-      h('p', { class: 'fine' }, 'All three missions are ready and none is completed. Do them live, or use a labelled “staged” shortcut.'),
-      h('h3', null, 'Jump to'),
-      h('div', { class: 'presenter__jumps' }, Object.entries(LOCATIONS).filter(([k]) => k !== 'kiosk').map(([k, loc]) => h('button', { type: 'button', class: 'btn btn--small', onClick: () => game.teleportTo(k) }, loc.label)),
-        h('button', { type: 'button', class: 'btn btn--small', onClick: () => game.teleportTo('kiosk') }, 'Kiosk and board')),
-      h('h3', null, 'Missions'),
-      h('ul', { class: 'presenter__missions' }, MISSION_IDS.map((id) => {
-        const st = missionStatus(p, id);
-        return h('li', null,
-          h('span', { class: 'presenter__mname' }, MISSIONS[id].title),
-          h('span', { class: 'fine' }, STATUS_LABEL[st]),
-          p[id].done ? null : h('button', { type: 'button', class: 'btn btn--small', onClick: () => game.actions.stageMission(id) }, 'Stage as demo shortcut'));
-      })),
-      h('div', { class: 'row' },
-        h('button', {
-          type: 'button', class: 'btn btn--small btn--danger',
-          onClick: () => openConfirm(game, { title: 'Reset all missions?', body: 'This puts all three missions back to their ready-to-demonstrate state and clears presenter-mode contributions. Normal play progress is not touched.', confirmLabel: 'Reset missions', danger: true, onConfirm: () => game.resetCurrentProfile() }),
-        }, 'Reset all missions'),
-        h('button', { type: 'button', class: 'btn btn--small', onClick: () => game.returnToTitle() }, 'Exit presenter mode'),
-      ),
-      h('h3', null, 'Three-minute run sheet'),
-      h('ol', { class: 'presenter__cues' }, CUES.map(([t, text]) => h('li', null, h('b', null, t), ' ', text))),
-    );
-    presenterRoot.appendChild(details);
+    setTimeout(() => t.remove(), o.ms || 4500);
   }
 
   return { refresh, setPrompt, setVisible, toast, paintSound };

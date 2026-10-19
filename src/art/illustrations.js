@@ -121,110 +121,6 @@ const SCENES = {
     ellipse(ctx, 245, 282, 24, 7, '#E6D3AE'); ellipse(ctx, 245, 281, 18, 4.5, C.greenLight);
   },
 
-  corridor(ctx, w, h) {
-    const sky = ctx.createLinearGradient(0, 0, 0, h);
-    sky.addColorStop(0, '#CFE6E3'); sky.addColorStop(1, '#F4E9D4');
-    ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
-    // ceiling, floor, side wall (one-point perspective)
-    poly(ctx, [[0, 0], [w, 0], [w * 0.72, h * 0.26], [w * 0.28, h * 0.26]], '#D9CBB0');
-    poly(ctx, [[0, h], [w, h], [w * 0.72, h * 0.62], [w * 0.28, h * 0.62]], '#D8B48E');
-    poly(ctx, [[0, 0], [w * 0.28, h * 0.26], [w * 0.28, h * 0.62], [0, h]], '#EAD9B6');
-    fillRR(ctx, w * 0.28, h * 0.26, w * 0.44, h * 0.36, 0, '#F4E9D4');
-    // doors on the left wall
-    poly(ctx, [[22, 70], [70, 96], [70, 205], [22, 250]], C.terra);
-    poly(ctx, [[92, 106], [124, 122], [124, 190], [92, 204]], C.teal);
-    // railing on the right with plants
-    ctx.strokeStyle = C.tealDark; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(w, h * 0.55); ctx.lineTo(w * 0.72, h * 0.5); ctx.stroke();
-    for (let i = 0; i < 9; i++) {
-      const t = i / 8; const x = w - t * (w - w * 0.72); const y = h * 0.55 - t * (h * 0.05);
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 60 * (1 - t * 0.6)); ctx.stroke();
-    }
-    plant(ctx, 440, 292, 1.2); plant(ctx, 60, 300, 1.3, C.tealDark); plant(ctx, 386, 214, 0.7);
-    // bunting
-    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(0, 28); ctx.quadraticCurveTo(w / 2, 80, w, 28); ctx.stroke();
-    const cols = [C.terra, C.sun, C.teal, C.greenLight];
-    for (let i = 0; i < 12; i++) {
-      const t = (i + 0.5) / 12; const x = t * w; const y = 28 + 4 * 4 * (t - t * t) * 13 + 2;
-      poly(ctx, [[x - 9, y], [x + 9, y], [x, y + 18]], cols[i % 4]);
-    }
-    lantern(ctx, 150, 86, 1.1, C.terra); lantern(ctx, 330, 100, 1, C.sun); lantern(ctx, 250, 118, 0.9, C.teal);
-    // bench with dishes
-    fillRR(ctx, 168, 218, 150, 12, 3, C.woodDark); fillRR(ctx, 176, 230, 8, 28, 2, C.woodDark); fillRR(ctx, 300, 230, 8, 28, 2, C.woodDark);
-    for (const x of [190, 225, 260, 295]) { ellipse(ctx, x, 214, 14, 5, '#FBF4E6'); ellipse(ctx, x, 212, 9, 3, '#E0A184'); }
-    // neighbours
-    const skins = C.skins;
-    person(ctx, 120, 300, 1.1, { shirt: C.teal, skin: skins[1], standing: true });
-    person(ctx, 175, 292, 1.0, { shirt: C.terra, skin: skins[2], standing: true, elder: true, glasses: true });
-    person(ctx, 235, 285, 1.0, { shirt: C.greenDark, skin: skins[0], standing: true, scarf: C.greenLight });
-    person(ctx, 292, 292, 1.05, { shirt: '#C79A3B', skin: skins[3], standing: true });
-    person(ctx, 345, 300, 1.1, { shirt: C.tealDark, skin: skins[1], standing: true });
-    person(ctx, 268, 305, 0.55, { shirt: C.terraLight, skin: skins[0], standing: true });
-    person(ctx, 210, 306, 0.5, { shirt: C.sun, skin: skins[2], standing: true });
-  },
-
-  kueh(ctx, w, h) {
-    ctx.fillStyle = '#EFE1C2'; ctx.fillRect(0, 0, w, h);
-    // tiled wall
-    for (let y = 0; y < 190; y += 24) for (let x = 0; x < w; x += 24) {
-      ctx.fillStyle = ((x + y) / 24) % 2 === 0 ? '#D7E8E3' : '#C4DDD7'; ctx.fillRect(x, y, 23, 23);
-    }
-    // window
-    fillRR(ctx, 330, 34, 110, 90, 6, '#CFE6F0'); ctx.strokeStyle = C.woodDark; ctx.lineWidth = 4; rr(ctx, 330, 34, 110, 90, 6); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(385, 34); ctx.lineTo(385, 124); ctx.moveTo(330, 79); ctx.lineTo(440, 79); ctx.stroke();
-    plant(ctx, 360, 124, 0.7);
-    // counter
-    fillRR(ctx, 0, 218, w, 102, 0, C.wood); fillRR(ctx, 0, 210, w, 16, 0, C.woodDark);
-    // tray of kueh (rows of coloured squares)
-    fillRR(ctx, 90, 190, 150, 30, 4, '#B5BDBF');
-    const cols = ['#E9A7B6', '#9CCB86', '#F7F1E1', '#E9A7B6', '#9CCB86', '#F7F1E1'];
-    cols.forEach((c, i) => { fillRR(ctx, 98 + i * 23, 195, 20, 20, 3, c); });
-    // steaming pot
-    fillRR(ctx, 330, 170, 90, 44, 6, '#9AA3A6'); ellipse(ctx, 375, 170, 45, 7, '#C7CED0');
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3;
-    for (const x of [350, 375, 400]) { ctx.beginPath(); ctx.moveTo(x, 160); ctx.quadraticCurveTo(x + 10, 140, x, 122); ctx.stroke(); }
-    // older woman with scarf (mother) and child
-    person(ctx, 180, 260, 1.9, { shirt: C.terra, skin: C.skins[1], scarf: C.greenLight, standing: false });
-    person(ctx, 270, 275, 1.25, { shirt: C.teal, skin: C.skins[1], hair: '#2d2420' });
-    // hands on the counter
-    ellipse(ctx, 215, 218, 10, 6, C.skins[1]); ellipse(ctx, 255, 224, 8, 5, C.skins[1]);
-  },
-
-  pot(ctx, w, h) {
-    ctx.fillStyle = '#C9A57A'; ctx.fillRect(0, 0, w, h);
-    for (let i = 0; i < 9; i++) { ctx.fillStyle = i % 2 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)'; ctx.fillRect(0, i * 36, w, 36); }
-    ellipse(ctx, 240, 262, 150, 22, 'rgba(0,0,0,0.18)');
-    // pot body
-    fillRR(ctx, 110, 120, 260, 140, 22, '#A9B1B3');
-    fillRR(ctx, 110, 120, 260, 40, 22, '#C2C9CB');
-    ellipse(ctx, 240, 124, 130, 30, '#D6DCDE');
-    ellipse(ctx, 240, 128, 112, 22, '#5C4A3F'); // crust
-    ellipse(ctx, 240, 124, 96, 15, '#8A7058');
-    // dent
-    ctx.strokeStyle = 'rgba(70,80,84,0.45)'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(160, 200, 24, -0.8, 0.9); ctx.stroke();
-    // handles
-    fillRR(ctx, 84, 150, 28, 14, 6, C.ink); fillRR(ctx, 368, 150, 28, 14, 6, C.ink);
-    // spoon
-    ctx.strokeStyle = C.woodDark; ctx.lineWidth = 8; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(400, 290); ctx.lineTo(330, 210); ctx.stroke();
-    ellipse(ctx, 322, 200, 18, 11, C.woodDark);
-    ctx.lineCap = 'butt';
-  },
-
-  note(ctx, w, h) {
-    ctx.fillStyle = '#C9A57A'; ctx.fillRect(0, 0, w, h);
-    ctx.save(); ctx.translate(w / 2, h / 2); ctx.rotate(-0.035);
-    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-176, -116, 360, 240);
-    ctx.fillStyle = '#FBF6E4'; ctx.fillRect(-180, -120, 360, 240);
-    ctx.strokeStyle = 'rgba(79,138,139,0.35)'; ctx.lineWidth = 1;
-    for (let y = -78; y < 110; y += 30) { ctx.beginPath(); ctx.moveTo(-170, y); ctx.lineTo(170, y); ctx.stroke(); }
-    ctx.strokeStyle = 'rgba(200,105,74,0.45)'; ctx.beginPath(); ctx.moveTo(-140, -120); ctx.lineTo(-140, 120); ctx.stroke();
-    ctx.fillStyle = '#2d3f55'; ctx.font = 'italic 21px "Segoe Print","Bradley Hand","Comic Sans MS",cursive';
-    ctx.textBaseline = 'alphabetic';
-    ['Mei — bring the good bowls.', 'First dinner with everyone', 'back at the table.', 'Don’t be late!   — Papa'].forEach((t, i) => ctx.fillText(t, -128, -52 + i * 30));
-    ctx.restore();
-    ctx.fillStyle = 'rgba(242,200,121,0.8)'; ctx.fillRect(w / 2 - 36, 26, 72, 22); // tape
-  },
-
   market(ctx, w, h) {
     const sky = ctx.createLinearGradient(0, 0, 0, h); sky.addColorStop(0, '#F6E3B8'); sky.addColorStop(1, '#F4E9D4');
     ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
@@ -295,15 +191,13 @@ const SCENES = {
 // ---------------------------------------------------------------------------
 //  Public API
 // ---------------------------------------------------------------------------
-function photoFinish(ctx, w, h, key) {
+function photoFinish(ctx, w, h) {
   // soft vignette + warm tint, so every scene reads as a keepsake
   const v = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
   v.addColorStop(0, 'rgba(60,35,10,0)'); v.addColorStop(1, 'rgba(60,35,10,0.30)');
   ctx.fillStyle = v; ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = 'rgba(255,214,150,0.09)'; ctx.fillRect(0, 0, w, h);
-  if (key !== 'note' && key !== 'pot') {
-    ctx.strokeStyle = 'rgba(251,244,230,0.95)'; ctx.lineWidth = 10; ctx.strokeRect(5, 5, w - 10, h - 10);
-  }
+  ctx.strokeStyle = 'rgba(251,244,230,0.95)'; ctx.lineWidth = 10; ctx.strokeRect(5, 5, w - 10, h - 10);
 }
 
 /** Returns a fresh <canvas> with the illustration drawn on it. */
@@ -316,7 +210,7 @@ export function drawIllustration(key, w = 480, h = 320) {
   ctx.scale(w / 480, h / 320); // scenes are authored at 480 x 320
   scene(ctx, 480, 320);
   ctx.restore();
-  photoFinish(ctx, w, h, key);
+  photoFinish(ctx, w, h);
   return canvas;
 }
 

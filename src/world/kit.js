@@ -4,7 +4,6 @@
 // =============================================================================
 import * as THREE from 'three';
 import { PALETTE as P } from './config.js';
-import { drawIllustration } from '../art/illustrations.js';
 
 // ---------------------------------------------------------------- materials
 const stdCache = new Map();
@@ -204,46 +203,7 @@ export function labelPlane(lines, pw, ph, opts = {}) {
   return mesh;
 }
 
-export function nameTag(text) {
-  const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 64;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = 'rgba(251,244,230,0.92)';
-  ctx.beginPath();
-  ctx.roundRect ? ctx.roundRect(4, 8, 248, 48, 22) : ctx.rect(4, 8, 248, 48);
-  ctx.fill();
-  ctx.strokeStyle = '#4F8A8B';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.fillStyle = '#3A2F28';
-  ctx.font = '700 26px system-ui, "Segoe UI", Roboto, Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, 128, 33);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  sp.scale.set(1.3, 0.325, 1);
-  sp.userData.noHighlight = true;
-  return sp;
-}
-
 // ---------------------------------------------------------------- props
-/** A framed picture. Faces +Z. */
-export function photoFrame(illusKey, w, h, { frame = P.woodDark } = {}) {
-  const g = new THREE.Group();
-  const t = 0.06;
-  const back = new THREE.Mesh(new THREE.BoxGeometry(w + t * 2, h + t * 2, 0.05), std(frame));
-  back.castShadow = true;
-  g.add(back);
-  const tex = canvasTexture(drawIllustration(illusKey, 384, Math.round(384 * (h / w))));
-  const pic = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, flatShading: false }));
-  pic.position.z = 0.028;
-  g.add(pic);
-  return g;
-}
-
 export function potPlant(kit, x, z, { scale = 1, pot = P.terra, parent = null, solid = true } = {}) {
   const g = new THREE.Group();
   g.position.set(x, 0, z);

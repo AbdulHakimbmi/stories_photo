@@ -1,12 +1,11 @@
 // =============================================================================
-//  screens.js — title, intro, about, controls, pause, confirm and ending screens.
+//  screens.js — title, about, controls, menu, confirm, notice and the gathering-place activity panel.
 // =============================================================================
 import { h } from './dom.js';
 import {
-  GAME_TITLE, SETTING_LINE, INTRO_PARAGRAPHS, FICTION_NOTICE, ABOUT_PARAGRAPHS, SIMULATED_POINTS,
-  CONTROLS, ENDING_QUOTE, AUDIENCES,
+  GAME_TITLE, SETTING_LINE, PROTOTYPE_NOTE, TEMP_STORAGE_NOTE, ABOUT_PARAGRAPHS, ABOUT_HOW, ABOUT_LIMITS,
+  CONTROLS, ACTIVITY, AREAS,
 } from '../data/content.js';
-import { docCount, stagedCount, missionRecord, publicRecords, restrictedRecords } from '../state/logic.js';
 
 function toggleButton(label, getOn, onToggle) {
   const btn = h('button', { type: 'button', class: 'btn btn--toggle', 'aria-pressed': String(!!getOn()) });
@@ -19,51 +18,65 @@ function toggleButton(label, getOn, onToggle) {
   paint();
   return btn;
 }
-
 export const soundToggle = (game) => toggleButton('Sound', () => !game.settings.muted, () => game.setMuted(!game.settings.muted));
 export const motionToggle = (game) => toggleButton('Reduced motion', () => game.settings.reducedMotion, () => game.setReducedMotion(!game.settings.reducedMotion));
 
-function closeButton(game, handleRef, label = 'Close') {
-  return h('button', { type: 'button', class: 'btn btn--primary', onClick: () => handleRef.current.close() }, label);
-}
+const closeBtn = (ref, label = 'Close') => h('button', { type: 'button', class: 'btn btn--primary', onClick: () => ref.current.close() }, label);
 
 // ---------------------------------------------------------------- title
-export function openTitle(game) {
-  const hasSave = game.store.hasProgress('play') && game.playStarted();
-  const warn = game.storageWarning();
-  const note = game.takeNotice ? game.takeNotice() : null;
+export function openTitle(game, { notice = null, error = null } = {}) {
+  const saved = game.savedHost();
+  const errBox = h('p', { class: 'banner banner--warn', role: 'alert', hidden: !error }, error || '');
+  const showError = (msg) => { errBox.textContent = msg; errBox.hidden = !msg; };
+  let busy = false;
+  const guard = (btn, fn) => async () => {
+    if (busy) return;
+    busy = true; btn.disabled = true; showError('');
+    try { await fn(); } catch (err) { showError(err && err.message ? err.message : String(err)); } finally { busy = false; btn.disabled = false; }
+  };
+
+  const startBtn = h('button', { type: 'button', class: 'btn btn--primary btn--big' }, 'Start a live garden session');
+  startBtn.addEventListener('click', guard(startBtn, () => game.startLive()));
+  let resumeBtn = null;
+  if (saved) {
+    resumeBtn = h('button', { type: 'button', class: 'btn btn--big' }, `Resume “${saved.name || 'saved session'}”`);
+    resumeBtn.addEventListener('click', guard(resumeBtn, () => game.resumeLive()));
+  }
+  const demoBtn = h('button', { type: 'button', class: 'btn btn--big', onClick: () => game.startDemo() }, 'Try the fictional demo');
+
   const content = h('div', { class: 'screen screen--title' },
     h('p', { class: 'badge' }, SETTING_LINE),
     h('h1', { class: 'title' }, GAME_TITLE),
-    h('p', { class: 'lede' }, 'Explore a neighbourhood, hear the stories behind photographs, and decide how a memory is kept.'),
-    warn ? h('p', { class: 'banner banner--warn', role: 'status' }, warn) : null,
-    note ? h('p', { class: 'banner banner--ok', role: 'status' }, note) : null,
+    h('p', { class: 'lede' }, 'A shared garden where photographs from real phones grow into memory plants. Nothing reaches the garden until the host approves it.'),
+    notice ? h('p', { class: 'banner banner--ok', role: 'status' }, notice) : null,
+    errBox,
     h('div', { class: 'stack' },
-      h('button', { type: 'button', class: 'btn btn--primary btn--big', onClick: () => game.startPlay() }, hasSave ? 'Continue' : 'Play'),
-      h('button', { type: 'button', class: 'btn btn--big', onClick: () => game.startPresenter() }, 'Presenter mode'),
-      h('div', { class: 'row' },
+      startBtn,
+      resumeBtn,
+      demoBtn,
+      h('div', { class: 'row row--center row--wrap' },
         h('button', { type: 'button', class: 'btn', onClick: () => openControls(game) }, 'Controls'),
-        h('button', { type: 'button', class: 'btn', onClick: () => openAbout(game) }, 'About'),
-        h('button', { type: 'button', class: 'btn btn--quiet', onClick: () => confirmResetAll(game) }, 'Reset progress'),
+        h('button', { type: 'button', class: 'btn', onClick: () => openAbout(game) }, 'About this prototype'),
+        saved ? h('button', { type: 'button', class: 'btn btn--quiet', onClick: () => confirmForget(game) }, 'Forget saved session') : null,
       ),
     ),
     h('div', { class: 'row row--center' }, soundToggle(game), motionToggle(game)),
-    h('p', { class: 'fine' }, 'A speculative design prototype. All characters and stories are fictional. Not an existing programme.'),
+    h('p', { class: 'fine' }, PROTOTYPE_NOTE),
+    h('p', { class: 'fine' }, 'The live session needs the garden server running on this computer (see the README). The fictional demo needs nothing and uploads nothing.'),
   );
-  return game.overlays.open(content, { id: 'title', kind: 'screen', label: 'Title screen', closable: false });
+  return game.overlays.open(content, { id: 'title', kind: 'screen', label: 'Title screen', closable: false, initialFocus: startBtn });
 }
 
-export function confirmResetAll(game) {
+function confirmForget(game) {
   openConfirm(game, {
-    title: 'Reset all demo progress?',
-    body: 'This clears the saved play progress and the presenter-mode progress in this browser. Your sound and motion settings are kept.',
-    confirmLabel: 'Reset progress',
-    danger: true,
-    onConfirm: () => game.resetAllProgress(),
+    title: 'Forget the saved session?',
+    body: 'This browser will stop being able to control that session. The session itself keeps running on the server until it expires; you can delete its data from the host panel before you forget it.',
+    confirmLabel: 'Forget it', danger: true,
+    onConfirm: () => game.forgetSaved(),
   });
 }
 
-// ---------------------------------------------------------------- confirm
+// ---------------------------------------------------------------- confirm + notice
 export function openConfirm(game, { title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, onConfirm }) {
   const ref = { current: null };
   const content = h('div', { class: 'panel panel--small' },
@@ -78,40 +91,35 @@ export function openConfirm(game, { title, body, confirmLabel = 'Confirm', cance
   return ref.current;
 }
 
-// ---------------------------------------------------------------- intro
-export function openIntro(game, onBegin) {
+export function openNotice(game, { title, paragraphs = [], buttonLabel = 'OK', onClose = null, id = 'notice' }) {
   const ref = { current: null };
-  const content = h('div', { class: 'panel panel--intro' },
-    h('p', { class: 'badge' }, SETTING_LINE),
-    h('h2', null, 'A neighbourhood memory service'),
-    INTRO_PARAGRAPHS.map((t) => h('p', null, t)),
-    h('p', null, 'You are Marcus, a young adult helping prepare a community memory session at Block 12. Aisha, the coordinator, needs three stories documented.'),
-    h('p', { class: 'banner' }, FICTION_NOTICE),
-    h('div', { class: 'row row--end' },
-      h('button', { type: 'button', class: 'btn btn--primary btn--big', onClick: () => { ref.current.close(); onBegin(); } }, 'Begin'),
-    ),
+  const content = h('div', { class: 'panel panel--small' },
+    h('h2', null, title),
+    paragraphs.map((p) => h('p', null, p)),
+    h('div', { class: 'row row--end' }, closeBtn(ref, buttonLabel)),
   );
-  ref.current = game.overlays.open(content, { id: 'intro', kind: 'screen', label: 'Introduction', closable: false });
+  ref.current = game.overlays.open(content, { id, kind: 'modal', label: title, onClose });
   return ref.current;
 }
 
-// ---------------------------------------------------------------- about
+// ---------------------------------------------------------------- about + controls
 export function openAbout(game) {
   const ref = { current: null };
-  const content = h('div', { class: 'panel' },
-    h('h2', null, 'About the future scenario'),
+  const content = h('div', { class: 'panel panel--about' },
     h('p', { class: 'badge' }, SETTING_LINE),
+    h('h2', null, `About ${GAME_TITLE}`),
     ABOUT_PARAGRAPHS.map((t) => h('p', null, t)),
-    h('h3', null, 'What is simulated in this prototype'),
-    h('ul', null, SIMULATED_POINTS.map((t) => h('li', null, t))),
-    h('p', { class: 'banner' }, FICTION_NOTICE),
-    h('div', { class: 'row row--end' }, closeButton(game, ref)),
+    h('h3', null, 'How it works'),
+    h('ol', null, ABOUT_HOW.map((t) => h('li', null, t))),
+    h('h3', null, 'Limits to be aware of'),
+    h('ul', null, ABOUT_LIMITS.map((t) => h('li', null, t))),
+    h('p', { class: 'banner' }, PROTOTYPE_NOTE),
+    h('div', { class: 'row row--end' }, closeBtn(ref)),
   );
-  ref.current = game.overlays.open(content, { id: 'about', kind: 'modal', label: 'About the future scenario' });
+  ref.current = game.overlays.open(content, { id: 'about', kind: 'modal', label: 'About this prototype' });
   return ref.current;
 }
 
-// ---------------------------------------------------------------- controls
 export function openControls(game) {
   const ref = { current: null };
   const content = h('div', { class: 'panel' },
@@ -121,92 +129,64 @@ export function openControls(game) {
     ),
     h('h3', null, 'Comfort and access'),
     h('ul', null,
-      h('li', null, 'All dialogue is shown as text and never advances on its own.'),
+      h('li', null, 'Everything can be done with on-screen buttons. The host panel lists every memory with an Open button, so you never have to find a plant in 3D.'),
       h('li', null, 'There is no timer, no score and nothing to fail. Take as long as you like.'),
-      h('li', null, 'Sound is optional. Turn it off any time with M, or in the pause menu.'),
-      h('li', null, 'Turn on Reduced motion to stop bobbing, swaying and drifting.'),
-      h('li', null, 'Stuck? Open the pause menu and choose “I’m stuck”.'),
+      h('li', null, 'Sound is off by default and optional. Toggle it with M or in the menu.'),
+      h('li', null, 'Turn on Reduced motion to stop swaying, bobbing and growth animations. It starts from your system setting.'),
+      h('li', null, 'Stuck? Open the menu and choose “Back to the gate”.'),
     ),
-    h('div', { class: 'row row--end' }, closeButton(game, ref)),
+    h('div', { class: 'row row--end' }, closeBtn(ref)),
   );
   ref.current = game.overlays.open(content, { id: 'controls', kind: 'modal', label: 'Controls' });
   return ref.current;
 }
 
-// ---------------------------------------------------------------- pause
-export function openPause(game) {
+// ---------------------------------------------------------------- menu (Esc)
+export function openMenu(game) {
   const ref = { current: null };
+  const go = (fn) => () => { ref.current.close(); fn(); };
+  const live = game.kind === 'live';
   const content = h('div', { class: 'panel panel--small' },
-    h('h2', null, 'Paused'),
-    h('p', { class: 'fine' }, game.store.profile === 'presenter' ? 'Presenter mode — its progress is stored separately from normal play.' : 'Your progress is saved automatically in this browser (demo only).'),
+    h('h2', null, 'Menu'),
     h('div', { class: 'stack' },
-      h('button', { type: 'button', class: 'btn btn--primary btn--big', onClick: () => ref.current.close() }, 'Resume'),
-      soundToggle(game),
-      motionToggle(game),
-      h('button', { type: 'button', class: 'btn', onClick: () => game.openJournal() }, 'Memory journal'),
+      h('button', { type: 'button', class: 'btn btn--primary', onClick: () => ref.current.close() }, 'Back to the garden'),
+      h('button', { type: 'button', class: 'btn', onClick: go(() => game.toggleDock(true)) }, live ? 'Open the host panel' : 'Open the demo panel'),
+      h('button', { type: 'button', class: 'btn', onClick: go(() => game.openActivity()) }, 'Gathering place activity'),
+      h('button', { type: 'button', class: 'btn', onClick: go(() => game.recoverPlayer()) }, 'Back to the gate (if you are stuck)'),
       h('button', { type: 'button', class: 'btn', onClick: () => openControls(game) }, 'Controls'),
-      h('button', { type: 'button', class: 'btn', onClick: () => { ref.current.close(); game.recoverPlayer(); } }, 'I’m stuck — return to the void deck'),
-      h('button', { type: 'button', class: 'btn', onClick: () => { ref.current.close(); game.returnToTitle(); } }, 'Return to title'),
-      h('button', {
-        type: 'button', class: 'btn btn--danger',
-        onClick: () => openConfirm(game, {
-          title: 'Reset this demo?',
-          body: game.store.profile === 'presenter'
-            ? 'This clears all presenter-mode progress and puts the three missions back to their ready-to-demonstrate state. Normal play progress is not touched.'
-            : 'This clears your play progress, journal, and archive contributions in this browser, then returns you to the start.',
-          confirmLabel: 'Reset demo',
-          danger: true,
-          onConfirm: () => { ref.current.close(); game.resetCurrentProfile(); },
-        }),
-      }, 'Reset demo'),
+      h('button', { type: 'button', class: 'btn', onClick: () => openAbout(game) }, 'About this prototype'),
+      h('div', { class: 'row row--center' }, soundToggle(game), motionToggle(game)),
+      h('button', { type: 'button', class: 'btn btn--quiet', onClick: go(() => game.returnToTitle()) }, live ? 'Leave to the title screen (the session keeps running)' : 'Leave the demo'),
     ),
   );
-  ref.current = game.overlays.open(content, { id: 'pause', kind: 'modal', label: 'Pause menu' });
+  ref.current = game.overlays.open(content, { id: 'pause', kind: 'modal', label: 'Menu' });
   return ref.current;
 }
 
-// ---------------------------------------------------------------- ending summary
-export function openEnding(game) {
-  const p = game.p;
-  const n = docCount(p);
-  const staged = stagedCount(p);
-  const contribution = p.contributions[0] || null;
-  const m1 = missionRecord(p, 'm1');
-  const m2 = missionRecord(p, 'm2');
-  const m3 = missionRecord(p, 'm3');
+// ---------------------------------------------------------------- the optional gathering-place activity
+export function openActivity(game) {
   const ref = { current: null };
-
-  const lines = [
-    [`${n === 3 ? 'Three' : n} ${n === 1 ? 'story' : 'stories'} documented`, staged ? `${n - staged} by you, ${staged} staged for the presenter demo` : 'with context, not just a picture'],
-    ['Multiple perspectives preserved', m1 && m2 ? 'Lim and Mei; and Madam Devi and a neighbour' : m1 || m2 ? 'in the stories you documented' : 'none yet'],
-    ['One contributor’s privacy preference respected', m3 ? 'Auntie Salmah’s memory is family-only and is not on the public board' : 'not yet — visit Auntie Salmah'],
-    [contribution ? `${p.contributions.length === 1 ? 'One sample memory' : `${p.contributions.length} sample memories`} contributed` : 'No sample memory contributed yet',
-      contribution ? `“${contribution.title}” — ${AUDIENCES[contribution.audience].short} (demo)` : 'use the kiosk'],
-  ];
-  const pub = publicRecords(p).length;
-  const restricted = restrictedRecords(p).length;
-
-  const content = h('div', { class: 'panel panel--ending' },
-    h('p', { class: 'badge' }, 'Session complete'),
-    h('h2', null, 'What we kept today'),
-    h('ul', { class: 'summary' }, lines.map(([a, b]) => h('li', null, h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'), h('div', null, h('strong', null, a), h('span', { class: 'summary__sub' }, b))))),
-    h('p', { class: 'fine' }, `On the public board: ${pub} · In the demo restricted list: ${restricted}. These are kept separate.`),
-    h('blockquote', { class: 'quote' }, ENDING_QUOTE.map((l) => h('p', null, l))),
-    h('div', { class: 'row row--wrap' },
-      h('button', { type: 'button', class: 'btn btn--primary', onClick: () => ref.current.close() }, 'Explore again'),
-      h('button', { type: 'button', class: 'btn', onClick: () => game.openArchive({ tab: 'board' }) }, 'View the archive'),
-      h('button', {
-        type: 'button', class: 'btn',
-        onClick: () => openConfirm(game, {
-          title: 'Restart?',
-          body: game.store.profile === 'presenter' ? 'This resets presenter-mode progress.' : 'This clears your play progress and begins again.',
-          confirmLabel: 'Restart', danger: true,
-          onConfirm: () => { ref.current.close(); game.resetCurrentProfile(); },
-        }),
-      }, 'Restart'),
-      h('button', { type: 'button', class: 'btn', onClick: () => openAbout(game) }, 'About the future scenario'),
-    ),
+  const body = h('div');
+  const paint = () => {
+    const prog = game.state.progress();
+    body.replaceChildren(
+      h('p', null, ACTIVITY.intro),
+      h('ul', { class: 'summary' }, prog.items.map((it) => h('li', null,
+        h('span', { class: `tick ${it.done ? 'tick--on' : ''}`, 'aria-hidden': 'true' }, it.done ? '✓' : ''),
+        h('span', null, h('strong', null, it.label), h('span', { class: 'summary__sub' }, `${AREAS[it.category].label} — ${it.done ? 'done' : 'not yet'}`))))),
+      prog.complete ? h('p', { class: 'banner banner--ok', role: 'status' }, ACTIVITY.done) : h('p', { class: 'fine' }, `${prog.count} of ${prog.items.length} are in the garden.`),
+      game.kind === 'demo' && !prog.complete ? h('button', { type: 'button', class: 'btn btn--primary', onClick: () => { game.plantNextDemo(); } }, 'Plant the next fictional memory') : null,
+    );
+  };
+  paint();
+  const unsub = game.state.subscribe(paint);
+  const content = h('div', { class: 'panel panel--small' },
+    h('h2', null, ACTIVITY.title),
+    body,
+    h('div', { class: 'row row--end' }, closeBtn(ref)),
   );
-  ref.current = game.overlays.open(content, { id: 'ending', kind: 'modal', label: 'Summary' });
+  ref.current = game.overlays.open(content, { id: 'activity', kind: 'modal', label: ACTIVITY.title, onClose: unsub });
   return ref.current;
 }
+
+export { TEMP_STORAGE_NOTE };

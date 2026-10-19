@@ -3,22 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Our Block, Our Stories — a speculative design prototype about a proposed neighbourhood memory service (Singapore, 2040). All characters and stories are fictional." />
+    <meta name="description" content="Our Memory Garden — a design prototype: photographs sent from phones grow into memory plants in a shared 3D garden, after the host approves them. Singapore, 2040 — a proposed future experience." />
     <meta name="color-scheme" content="light" />
-    <title>Our Block, Our Stories — a proposed future (prototype)</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2335686A'/%3E%3Crect x='7' y='9' width='18' height='14' fill='%23F4E9D4'/%3E%3Crect x='11' y='13' width='4' height='10' fill='%23C8694A'/%3E%3C/svg%3E" />
+    <title>Our Memory Garden — a proposed future experience (prototype)</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2335686A'/%3E%3Ccircle cx='16' cy='13' r='6' fill='%23C8694A'/%3E%3Crect x='15' y='16' width='2' height='10' fill='%23F4E9D4'/%3E%3C/svg%3E" />
   </head>
   <body>
-    <canvas id="game" tabindex="-1" role="img" aria-label="3D view of a fictional neighbourhood. Controls are listed in the Controls screen; every action is also available from on-screen buttons."></canvas>
+    <canvas id="game" tabindex="-1" role="img" aria-label="3D view of a shared memory garden with four planting areas: Everyday Moments, Celebrations, People We Cherish and Places We Remember. Every action in the garden is also available from the on-screen buttons and the host panel, which lists each memory with an Open button."></canvas>
 
     <div id="hud" class="hud" hidden></div>
-    <div id="presenter" class="presenter-root" hidden></div>
+    <div id="dock" hidden></div>
     <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
     <div id="overlays"></div>
 
     <div id="fallback" class="fallback" hidden role="alert">
       <div class="fallback__card">
-        <h1>The game could not start</h1>
+        <h1>The garden could not start</h1>
         <p data-msg></p>
         <ul>
           <li>Use a recent desktop version of Chrome, Edge, Firefox or Safari.</li>
@@ -26,12 +26,12 @@
           <li>Close other heavy tabs, then reload this page.</li>
           <li>On a slower laptop, add <code>?low</code> to the address (for example <code>http://localhost:5173/?low</code>) for a lighter graphics mode.</li>
         </ul>
-        <button type="button" onclick="location.reload()">Reload</button>
+        <button type="button" id="reload-btn">Reload</button>
       </div>
     </div>
 
     <noscript>
-      <div class="fallback"><div class="fallback__card"><h1>JavaScript is required</h1><p>Our Block, Our Stories runs in the browser and needs JavaScript enabled.</p></div></div>
+      <div class="fallback"><div class="fallback__card"><h1>JavaScript is required</h1><p>Our Memory Garden runs in the browser and needs JavaScript enabled.</p></div></div>
     </noscript>
 
     <script type="module" src="/src/main.js"></script>

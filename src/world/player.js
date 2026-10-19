@@ -1,5 +1,5 @@
 // =============================================================================
-//  player.js — Marcus (third-person), movement with collision, and the follow camera.
+//  player.js — the visitor (third-person), movement with collision, and the follow camera.
 //  Camera: orbit around the player; the camera is shortened by a ray test against
 //  walls/ceilings so it never ends up inside a wall.
 // =============================================================================
@@ -117,6 +117,6 @@ export class Player {
     this.curDist = want < this.curDist ? want : this.curDist + (want - this.curDist) * Math.min(1, dt * 5);
     this.camera.position.set(head.x + dir.x * this.curDist, Math.max(0.3, head.y + dir.y * this.curDist), head.z + dir.z * this.curDist);
     this.camera.lookAt(head.x, head.y - 0.2, head.z);
-    this.model.visible = this.curDist > 1.15; // hide Marcus if the camera is squeezed right up to him
+    this.model.visible = this.curDist > 1.15; // hide the visitor if the camera is squeezed right up to him
   }
 }

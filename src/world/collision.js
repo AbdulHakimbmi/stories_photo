@@ -17,6 +17,11 @@ export class Colliders {
     return b;
   }
 
+  removeSolid(box) {
+    this.walk = this.walk.filter((b) => b !== box);
+    this.cam = this.cam.filter((b) => b !== box);
+  }
+
   /** Push a circle (pos.x, pos.z, radius r) out of every walk box, then clamp to world bounds. */
   resolve(pos, r) {
     for (let iter = 0; iter < 8; iter++) {

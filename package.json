@@ -1,19 +1,26 @@
 {
-  "name": "our-block-our-stories",
-  "version": "1.0.0",
+  "name": "our-memory-garden",
+  "version": "2.0.0",
   "private": true,
-  "description": "Our Block, Our Stories — a speculative design prototype: a low-poly browser game about a proposed neighbourhood memory service (Singapore, 2040).",
+  "description": "Our Memory Garden \u2014 a shared 3D garden where photographs sent from phones (QR code, host approval) grow into memory plants. A design prototype: Singapore, 2040, a proposed future experience.",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev:client": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "test": "node scripts/logic-test.mjs"
+    "showcase": "vite build && node --disable-warning=ExperimentalWarning server/index.js",
+    "clear-data": "node --disable-warning=ExperimentalWarning server/index.js --clear-data",
+    "test": "node --disable-warning=ExperimentalWarning scripts/server-test.mjs && node scripts/garden-state-test.mjs",
+    "test:ui": "node --disable-warning=ExperimentalWarning scripts/ui-harness/garden-ui.mjs && node --disable-warning=ExperimentalWarning scripts/ui-harness/phone-ui.mjs",
+    "test:qr": "python3 scripts/qr-check.py"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
   },
   "dependencies": {
+    "sharp": "^0.35.4",
     "three": "^0.170.0"
   },
   "devDependencies": {
