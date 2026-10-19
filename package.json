@@ -1,0 +1,22 @@
+{
+  "name": "our-block-our-stories",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Our Block, Our Stories — a speculative design prototype: a low-poly browser game about a proposed neighbourhood memory service (Singapore, 2040).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node scripts/logic-test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
